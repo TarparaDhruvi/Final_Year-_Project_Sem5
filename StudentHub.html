@@ -1,0 +1,1563 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>StudentHub</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<style>
+  html, body { margin: 0; padding: 0; background: #14161C; }
+  * { box-sizing: border-box; }
+  body { font-family: 'Inter', sans-serif; }
+  .sh-display { font-family: 'Fraunces', serif; }
+  .sh-mono { font-family: 'IBM Plex Mono', monospace; }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-thumb { background: #383D4A; border-radius: 4px; }
+  input:focus, textarea:focus, select:focus { outline: none; border-color: #2FD9B4 !important; }
+  .sh-btn { transition: transform .12s ease, background .12s ease, border-color .12s ease; cursor: pointer; }
+  .sh-btn:active { transform: scale(0.97); }
+  .sh-row:hover { background: #20242D; }
+  [data-theme="light"] .sh-row:hover { background: #F0F1F4; }
+  [data-theme="light"] ::-webkit-scrollbar-thumb { background: #C7CAD3; }
+</style>
+</head>
+<body>
+<div id="root">
+  <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;color:#9CA1AE;font-family:sans-serif;text-align:center;padding:40px;">
+    <div>
+      <p style="font-size:16px;color:#F1F2F4;margin-bottom:8px;">Loading StudentHub…</p>
+      <p style="font-size:13px;">If this message doesn't disappear in a few seconds, your internet connection or network is blocking the required scripts (React/Babel from cdnjs.cloudflare.com). Try a different network, or open browser DevTools (F12) → Console tab to see the error.</p>
+    </div>
+  </div>
+</div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useMemo, useEffect } = React;
+
+/* ---------------------------------------------------------------------- */
+/* Persistence helpers — backed by window.storage so data survives        */
+/* refreshes and re-logins instead of resetting to the seed data.         */
+/* ---------------------------------------------------------------------- */
+
+async function loadKey(key, fallback) {
+  try {
+    const res = await window.storage.get(key, false);
+    if (res && res.value != null) return JSON.parse(res.value);
+  } catch (e) { /* key missing or storage unavailable — use fallback */ }
+  return fallback;
+}
+async function saveKey(key, value) {
+  try { await window.storage.set(key, JSON.stringify(value), false); }
+  catch (e) { console.error("Could not save " + key, e); }
+}
+function persistedSetter(setState, key) {
+  return updater => {
+    setState(prev => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      saveKey(key, next);
+      return next;
+    });
+  };
+}
+
+/* ---------------------------------------------------------------------- */
+/* Design tokens                                                          */
+/* ---------------------------------------------------------------------- */
+
+const THEMES = {
+  dark: {
+    bg: "#14161C", surface: "#1B1E26", surfaceAlt: "#20242D", raised: "#262A34",
+    border: "#2A2E38", borderStrong: "#383D4A",
+    text: "#F1F2F4", text2: "#9CA1AE", text3: "#656B76",
+    teal: "#2FD9B4", tealSoft: "#16332E",
+    coral: "#FF6E5C", coralSoft: "#3A211D",
+    violet: "#9C8CFB", violetSoft: "#241F3A",
+    amber: "#F2B84B", amberSoft: "#332711",
+    red: "#F0605A", rowHover: "#20242D",
+  },
+  light: {
+    bg: "#F4F5F7", surface: "#FFFFFF", surfaceAlt: "#F0F1F4", raised: "#FFFFFF",
+    border: "#E2E4E9", borderStrong: "#C7CAD3",
+    text: "#1C1E24", text2: "#585E6B", text3: "#8A8F99",
+    teal: "#0E9C81", tealSoft: "#DEF6F0",
+    coral: "#D9432F", coralSoft: "#FBE7E3",
+    violet: "#6E5CE0", violetSoft: "#ECE9FE",
+    amber: "#B57A0E", amberSoft: "#FBF0D9",
+    red: "#D53A34", rowHover: "#F0F1F4",
+  },
+};
+// T is intentionally a mutable, module-level object: components read T.xxx
+// directly at render time (rather than via props/context), so flipping the
+// theme just overwrites these values in place and triggers a re-render from
+// the app root — see setThemeMode() in StudentHubApp.
+const T = { ...THEMES.dark };
+
+/* ---------------------------------------------------------------------- */
+/* Hand-drawn icon set (no external icon library needed)                  */
+/* ---------------------------------------------------------------------- */
+
+function Icon({ name, size = 16, color = "currentColor" }) {
+  const s = { width: size, height: size, display: "block" };
+  const common = { viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round", style: s };
+  switch (name) {
+    case "home": return <svg {...common}><path d="M3 11l9-7 9 7" /><path d="M5 10v9h14v-9" /></svg>;
+    case "check-square": return <svg {...common}><rect x="4" y="4" width="16" height="16" rx="3" /><path d="M8 12l3 3 5-6" /></svg>;
+    case "repeat": return <svg {...common}><path d="M4 9a5 5 0 015-5h9" /><path d="M15 2l3 2-3 2" /><path d="M20 15a5 5 0 01-5 5H6" /><path d="M9 22l-3-2 3-2" /></svg>;
+    case "book": return <svg {...common}><path d="M4 4h9a3 3 0 013 3v13H7a3 3 0 01-3-3z" /><path d="M16 4h4v16h-4" /></svg>;
+    case "calendar": return <svg {...common}><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M3 10h18" /><path d="M8 3v4" /><path d="M16 3v4" /></svg>;
+    case "note": return <svg {...common}><path d="M6 3h9l5 5v13H6z" /><path d="M14 3v5h5" /><path d="M9 13h6" /><path d="M9 17h6" /></svg>;
+    case "smile": return <svg {...common}><circle cx="12" cy="12" r="9" /><path d="M8 14s1.5 2 4 2 4-2 4-2" /><path d="M9 9h.01" /><path d="M15 9h.01" /></svg>;
+    case "bot": return <svg {...common}><rect x="5" y="9" width="14" height="10" rx="3" /><path d="M12 5v4" /><circle cx="12" cy="3" r="1" /><path d="M9 14v1" /><path d="M15 14v1" /></svg>;
+    case "wallet": return <svg {...common}><rect x="3" y="6" width="18" height="13" rx="2" /><path d="M3 10h18" /><circle cx="16" cy="14" r="1.2" /></svg>;
+    case "target": return <svg {...common}><circle cx="12" cy="12" r="8" /><circle cx="12" cy="12" r="4" /><circle cx="12" cy="12" r="0.6" fill={color} /></svg>;
+    case "bar-chart": return <svg {...common}><path d="M4 20V10" /><path d="M12 20V4" /><path d="M20 20v-7" /></svg>;
+    case "bell": return <svg {...common}><path d="M6 9a6 6 0 0112 0c0 4 1.5 5.5 2 6H4c.5-.5 2-2 2-6z" /><path d="M10 19a2 2 0 004 0" /></svg>;
+    case "shield": return <svg {...common}><path d="M12 3l7 3v6c0 5-3.5 7.5-7 9-3.5-1.5-7-4-7-9V6z" /><path d="M9 12l2 2 4-4" /></svg>;
+    case "sparkles": return <svg {...common}><path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5z" /><path d="M19 15l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7z" /></svg>;
+    case "plus": return <svg {...common}><path d="M12 5v14" /><path d="M5 12h14" /></svg>;
+    case "trash": return <svg {...common}><path d="M4 7h16" /><path d="M9 7V4h6v3" /><path d="M6 7l1 13h10l1-13" /></svg>;
+    case "check": return <svg {...common}><path d="M4 12l5 5L20 6" /></svg>;
+    case "x": return <svg {...common}><path d="M5 5l14 14" /><path d="M19 5L5 19" /></svg>;
+    case "search": return <svg {...common}><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" /></svg>;
+    case "flame": return <svg {...common}><path d="M12 2s5 5 5 10a5 5 0 01-10 0c0-2 1-3 1-3s.5 2 2 2c-1-3 1-5 1-7 0 0 1 1 1-2z" /></svg>;
+    case "chevron-right": return <svg {...common}><path d="M9 6l6 6-6 6" /></svg>;
+    case "download": return <svg {...common}><path d="M12 4v11" /><path d="M7 11l5 5 5-5" /><path d="M5 20h14" /></svg>;
+    case "logout": return <svg {...common}><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4" /><path d="M16 17l5-5-5-5" /><path d="M21 12H9" /></svg>;
+    case "menu": return <svg {...common}><path d="M4 6h16" /><path d="M4 12h16" /><path d="M4 18h16" /></svg>;
+    case "send": return <svg {...common}><path d="M22 2L11 13" /><path d="M22 2l-7 20-4-9-9-4z" /></svg>;
+    case "cap": return <svg {...common}><path d="M2 9l10-5 10 5-10 5z" /><path d="M6 11v5c0 1.5 3 3 6 3s6-1.5 6-3v-5" /></svg>;
+    case "user": return <svg {...common}><circle cx="12" cy="8" r="4" /><path d="M4 20c0-4 3.5-7 8-7s8 3 8 7" /></svg>;
+    case "sun": return <svg {...common}><circle cx="12" cy="12" r="4" /><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1" /></svg>;
+    case "moon": return <svg {...common}><path d="M20 14.5A8.5 8.5 0 019.5 4a8.5 8.5 0 1010.5 10.5z" /></svg>;
+    default: return null;
+  }
+}
+
+/* ---------------------------------------------------------------------- */
+/* Small primitives                                                       */
+/* ---------------------------------------------------------------------- */
+
+function Card({ children, style, ...rest }) {
+  return <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 16, padding: "20px 22px", ...style }} {...rest}>{children}</div>;
+}
+
+function SectionTab({ color = T.teal }) {
+  return <span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 3, background: color, marginRight: 10, transform: "rotate(45deg)" }} />;
+}
+
+function SectionTitle({ children, color, sub }) {
+  return (
+    <div style={{ marginBottom: 18 }}>
+      <div style={{ display: "flex", alignItems: "center" }}>
+        <SectionTab color={color} />
+        <h2 className="sh-display" style={{ fontSize: 22, fontWeight: 600, color: T.text, margin: 0 }}>{children}</h2>
+      </div>
+      {sub && <p style={{ color: T.text3, fontSize: 13, margin: "6px 0 0 20px" }}>{sub}</p>}
+    </div>
+  );
+}
+
+function Pill({ children, color, bg }) {
+  return <span style={{ fontSize: 11.5, fontWeight: 600, color, background: bg, padding: "3px 9px", borderRadius: 999, letterSpacing: 0.2 }}>{children}</span>;
+}
+
+function IconBtn({ icon, onClick, danger }) {
+  return (
+    <button className="sh-btn" onClick={onClick} style={{ width: 30, height: 30, display: "grid", placeItems: "center", borderRadius: 9, border: `1px solid ${T.border}`, background: "transparent", color: danger ? T.coral : T.text2 }}>
+      <Icon name={icon} size={14} color={danger ? T.coral : T.text2} />
+    </button>
+  );
+}
+
+function PrimaryButton({ children, onClick, color = T.teal, dark = "#08201B", icon }) {
+  return (
+    <button className="sh-btn" onClick={onClick} style={{ display: "flex", alignItems: "center", gap: 8, background: color, color: dark, border: "none", padding: "10px 16px", borderRadius: 10, fontWeight: 600, fontSize: 13.5 }}>
+      {icon && <Icon name={icon} size={15} color={dark} />}
+      {children}
+    </button>
+  );
+}
+
+function TextField({ value, onChange, placeholder, style, type = "text", ...rest }) {
+  return <input type={type} value={value} onChange={onChange} placeholder={placeholder} {...rest}
+    style={{ background: T.surfaceAlt, border: `1px solid ${T.border}`, borderRadius: 10, padding: "9px 12px", color: T.text, fontSize: 13.5, fontFamily: "Inter, sans-serif", ...style }} />;
+}
+
+/* Date bounds used by every date picker in the app: no past dates, and no
+   absurd far-future years (e.g. typing "8989").
+   IMPORTANT: use LOCAL date parts here, not toISOString() — toISOString()
+   converts to UTC, which rolls the date back a day for timezones ahead of
+   UTC (like IST) and would let people slip in "yesterday" as a valid date. */
+function toLocalISO(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+function todayISO() {
+  return toLocalISO(new Date());
+}
+function maxFutureISO() {
+  const d = new Date();
+  d.setFullYear(d.getFullYear() + 10);
+  return toLocalISO(d);
+}
+function isDateInRange(iso) {
+  if (!iso) return true; // empty/unset is fine, not a bad date
+  return iso >= todayISO() && iso <= maxFutureISO();
+}
+
+function EmptyState({ text, icon }) {
+  return (
+    <div style={{ textAlign: "center", padding: "36px 10px", color: T.text3 }}>
+      <Icon name={icon} size={22} color={T.text3} />
+      <p style={{ fontSize: 13, margin: "8px 0 0" }}>{text}</p>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
+/* Lightweight custom charts (no external chart library)                  */
+/* ---------------------------------------------------------------------- */
+
+function SimpleBarChart({ data, dataKey, color }) {
+  const max = Math.max(...data.map(d => d[dataKey]), 1);
+  return (
+    <div style={{ display: "flex", alignItems: "flex-end", gap: 12, height: 200, padding: "10px 4px" }}>
+      {data.map((d, i) => (
+        <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+          <span className="sh-mono" style={{ fontSize: 11, color: T.text3 }}>{d[dataKey]}</span>
+          <div style={{ width: "100%", maxWidth: 30, height: `${(d[dataKey] / max) * 140}px`, background: color, borderRadius: "6px 6px 0 0" }} />
+          <span style={{ fontSize: 11, color: T.text3 }}>{d.day}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SimpleLineChart({ data, dataKey, color }) {
+  const w = 560, h = 180, pad = 20;
+  const max = Math.max(...data.map(d => d[dataKey]), 1);
+  const min = Math.min(...data.map(d => d[dataKey]), 0);
+  const range = max - min || 1;
+  const points = data.map((d, i) => {
+    const x = pad + (i / (data.length - 1)) * (w - pad * 2);
+    const y = h - pad - ((d[dataKey] - min) / range) * (h - pad * 2);
+    return [x, y];
+  });
+  const path = points.map((p, i) => (i === 0 ? "M" : "L") + p[0] + "," + p[1]).join(" ");
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} style={{ width: "100%", height: 200 }}>
+      <path d={path} fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+      {points.map((p, i) => <circle key={i} cx={p[0]} cy={p[1]} r="3.5" fill={color} />)}
+      {data.map((d, i) => (
+        <text key={i} x={points[i][0]} y={h - 2} fontSize="10" fill={T.text3} textAnchor="middle">{d.day}</text>
+      ))}
+    </svg>
+  );
+}
+
+function SimplePieChart({ data, colors }) {
+  const total = data.reduce((a, d) => a + d.value, 0) || 1;
+  let acc = 0;
+  const stops = data.map((d, i) => {
+    const start = (acc / total) * 360;
+    acc += d.value;
+    const end = (acc / total) * 360;
+    return `${colors[i % colors.length]} ${start}deg ${end}deg`;
+  });
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
+      <div style={{ width: 130, height: 130, borderRadius: "50%", background: `conic-gradient(${stops.join(",")})`, flexShrink: 0, position: "relative" }}>
+        <div style={{ position: "absolute", inset: 22, borderRadius: "50%", background: T.surface }} />
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {data.map((d, i) => (
+          <div key={i} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ width: 10, height: 10, borderRadius: 3, background: colors[i % colors.length] }} />
+            <span style={{ fontSize: 12.5, color: T.text2 }}>{d.name}</span>
+            <span className="sh-mono" style={{ fontSize: 12, color: T.text3 }}>₹{d.value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
+/* Streak ring — signature element                                        */
+/* ---------------------------------------------------------------------- */
+
+function StreakRing({ value = 12, goal = 30 }) {
+  const ticks = 30;
+  const filled = Math.round((value / goal) * ticks);
+  return (
+    <div style={{ position: "relative", width: 118, height: 118 }}>
+      <svg width="118" height="118" viewBox="0 0 118 118">
+        {Array.from({ length: ticks }).map((_, i) => {
+          const angle = (i / ticks) * 2 * Math.PI - Math.PI / 2;
+          const r1 = 48, r2 = 58;
+          const x1 = 59 + r1 * Math.cos(angle), y1 = 59 + r1 * Math.sin(angle);
+          const x2 = 59 + r2 * Math.cos(angle), y2 = 59 + r2 * Math.sin(angle);
+          return <line key={i} x1={x1} y1={y1} x2={x2} y2={y2} stroke={i < filled ? T.teal : T.border} strokeWidth={i < filled ? 3 : 2} strokeLinecap="round" />;
+        })}
+      </svg>
+      <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+        <Icon name="flame" size={18} color={T.amber} />
+        <span className="sh-mono" style={{ fontSize: 20, fontWeight: 500, color: T.text, marginTop: 2 }}>{value}</span>
+        <span style={{ fontSize: 10, color: T.text3 }}>day streak</span>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
+/* Navigation config (from Modules list / Chapter 2 requirement analysis) */
+/* ---------------------------------------------------------------------- */
+
+const NAV = [
+  { group: "Overview", items: [
+    { id: "dashboard", label: "Dashboard", icon: "home" },
+    { id: "analytics", label: "Progress Analytics", icon: "bar-chart" },
+    { id: "notifications", label: "Notifications", icon: "bell" },
+  ]},
+  { group: "Plan", items: [
+    { id: "tasks", label: "Tasks & To-Do", icon: "check-square" },
+    { id: "planner", label: "Study Planner", icon: "book" },
+    { id: "timetable", label: "Timetable", icon: "calendar" },
+    { id: "goals", label: "Goals & Milestones", icon: "target" },
+  ]},
+  { group: "Track", items: [
+    { id: "habits", label: "Habit Tracker", icon: "repeat" },
+    { id: "finance", label: "Finance Tracker", icon: "wallet" },
+    { id: "mood", label: "Mood Journal", icon: "smile" },
+  ]},
+  { group: "Reflect", items: [
+    { id: "notes", label: "Notes & Resources", icon: "note" },
+    { id: "coach", label: "AI Study Coach", icon: "bot" },
+    { id: "report", label: "Weekly AI Report", icon: "sparkles" },
+  ]},
+  { group: "System", items: [
+    { id: "profile", label: "Profile", icon: "user" },
+    { id: "settings", label: "Data & Privacy", icon: "shield" },
+  ]},
+];
+const PAGE_META = Object.fromEntries(NAV.flatMap(g => g.items).map(i => [i.id, i]));
+
+/* ---------------------------------------------------------------------- */
+/* Login screen                                                           */
+/* ---------------------------------------------------------------------- */
+
+const EMAIL_RE = /^[^\s@]+@gmail\.com$/i;
+
+function Login({ onLogin }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const submit = () => {
+    const cleanEmail = email.trim();
+    if (!cleanEmail || !password) { setError("Enter your email and password to continue."); return; }
+    if (!EMAIL_RE.test(cleanEmail)) { setError("Enter a valid Gmail address, e.g. you@gmail.com."); return; }
+    if (password.length < 6) { setError("Password must be at least 6 characters."); return; }
+    setError(""); onLogin(cleanEmail);
+  };
+  return (
+    <div style={{ minHeight: "100vh", background: T.bg, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+      <div style={{ display: "flex", width: "100%", maxWidth: 860, borderRadius: 20, overflow: "hidden", border: `1px solid ${T.border}` }}>
+        <div style={{ flex: 1, background: T.surface, padding: "48px 40px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 36 }}>
+            <div style={{ width: 34, height: 34, borderRadius: 9, background: T.teal, display: "grid", placeItems: "center", transform: "rotate(-6deg)" }}>
+              <Icon name="cap" size={18} color="#08201B" />
+            </div>
+            <span className="sh-display" style={{ fontSize: 19, fontWeight: 600, color: T.text }}>StudentHub</span>
+          </div>
+          <h1 className="sh-display" style={{ fontSize: 30, fontWeight: 600, color: T.text, margin: "0 0 8px" }}>Welcome back.</h1>
+          <p style={{ color: T.text2, fontSize: 14, margin: "0 0 30px" }}>Sign in to your dashboard.</p>
+          <label style={{ fontSize: 12, color: T.text3, display: "block", marginBottom: 6 }}>Email</label>
+          <TextField value={email} onChange={e => setEmail(e.target.value)} placeholder="you@gmail.com" style={{ width: "100%", marginBottom: 16 }} />
+          <label style={{ fontSize: 12, color: T.text3, display: "block", marginBottom: 6 }}>Password</label>
+          <TextField type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" style={{ width: "100%" }} />
+          {error && <p style={{ color: T.coral, fontSize: 12.5, marginTop: 10 }}>{error}</p>}
+          <div style={{ marginTop: 18 }}>
+            <PrimaryButton onClick={submit} icon="chevron-right">Log in</PrimaryButton>
+          </div>
+        </div>
+        <div style={{ flex: 1, background: `radial-gradient(circle at 30% 20%, ${T.tealSoft}, ${T.bg} 70%)`, padding: 40, display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+          <div><Pill color={T.teal} bg={T.tealSoft}>AI-powered</Pill></div>
+          <div>
+            <p className="sh-display" style={{ color: T.text, fontSize: 22, lineHeight: 1.4, margin: 0 }}>
+              "One place for your tasks, habits, notes, budget and mind — instead of six apps."
+            </p>
+            <p style={{ color: T.text3, fontSize: 13, marginTop: 14 }}>Student life, organized.</p>
+          </div>
+          <div />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
+/* Sidebar + Topbar                                                       */
+/* ---------------------------------------------------------------------- */
+
+function Sidebar({ page, setPage, collapsed, setCollapsed, onLogout }) {
+  return (
+    <div style={{ width: collapsed ? 74 : 236, background: T.surface, borderRight: `1px solid ${T.border}`, display: "flex", flexDirection: "column", padding: "18px 12px", gap: 4, overflowY: "auto", flexShrink: 0, transition: "width .18s ease" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "0 8px 20px", justifyContent: collapsed ? "center" : "flex-start" }}>
+        <div style={{ width: 30, height: 30, borderRadius: 8, background: T.teal, display: "grid", placeItems: "center", transform: "rotate(-6deg)", flexShrink: 0 }}>
+          <Icon name="cap" size={16} color="#08201B" />
+        </div>
+        {!collapsed && <span className="sh-display" style={{ fontWeight: 600, color: T.text, fontSize: 16 }}>StudentHub</span>}
+      </div>
+      {NAV.map(g => (
+        <div key={g.group} style={{ marginBottom: 10 }}>
+          {!collapsed && <p style={{ fontSize: 10.5, color: T.text3, textTransform: "uppercase", letterSpacing: 0.6, margin: "10px 8px 6px" }}>{g.group}</p>}
+          {g.items.map(item => {
+            const active = page === item.id;
+            return (
+              <button key={item.id} onClick={() => setPage(item.id)} className="sh-btn"
+                style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "9px 10px", borderRadius: 10, border: "none", background: active ? T.tealSoft : "transparent", color: active ? T.teal : T.text2, fontSize: 13.5, fontWeight: active ? 600 : 500, marginBottom: 2, position: "relative", justifyContent: collapsed ? "center" : "flex-start" }}>
+                {active && !collapsed && <span style={{ position: "absolute", left: -12, top: "50%", transform: "translateY(-50%)", width: 4, height: 16, background: T.teal, borderRadius: 4 }} />}
+                <Icon name={item.icon} size={16} color={active ? T.teal : T.text2} />
+                {!collapsed && item.label}
+              </button>
+            );
+          })}
+        </div>
+      ))}
+      <div style={{ marginTop: "auto", paddingTop: 10, borderTop: `1px solid ${T.border}` }}>
+        <button onClick={() => setCollapsed(!collapsed)} className="sh-btn" style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "9px 10px", borderRadius: 10, border: "none", background: "transparent", color: T.text3, fontSize: 13, justifyContent: collapsed ? "center" : "flex-start" }}>
+          <Icon name="menu" size={16} color={T.text3} /> {!collapsed && "Collapse"}
+        </button>
+        <button onClick={onLogout} className="sh-btn" style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "9px 10px", borderRadius: 10, border: "none", background: "transparent", color: T.text3, fontSize: 13, justifyContent: collapsed ? "center" : "flex-start" }}>
+          <Icon name="logout" size={16} color={T.text3} /> {!collapsed && "Log out"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function buildSearchIndex(data) {
+  const rows = [];
+  data.tasks.forEach(t => rows.push({ page: "tasks", icon: "check-square", label: t.name, sub: `Task · due ${t.deadline}` }));
+  data.notes.forEach(n => rows.push({ page: "notes", icon: "note", label: n.title, sub: "Note" }));
+  data.schedule.forEach(s => rows.push({ page: "timetable", icon: "calendar", label: s.className, sub: `Class · ${s.day} ${s.time}` }));
+  data.goals.forEach(g => rows.push({ page: "goals", icon: "target", label: g.name, sub: "Goal" }));
+  data.plans.forEach(p => rows.push({ page: "planner", icon: "book", label: p.subject, sub: "Study plan" }));
+  data.habits.forEach(h => rows.push({ page: "habits", icon: "repeat", label: h.name, sub: "Habit" }));
+  return rows;
+}
+
+function SearchBar({ data, setPage }) {
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const index = useMemo(() => buildSearchIndex(data), [data]);
+  const results = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (q.length < 1) return [];
+    return index.filter(r => r.label.toLowerCase().includes(q)).slice(0, 8);
+  }, [query, index]);
+  const go = page => { setPage(page); setOpen(false); setQuery(""); };
+  return (
+    <div style={{ position: "relative" }}>
+      <span style={{ position: "absolute", left: 11, top: 10 }}><Icon name="search" size={14} color={T.text3} /></span>
+      <input
+        value={query}
+        onChange={e => { setQuery(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setTimeout(() => setOpen(false), 120)}
+        placeholder="Search StudentHub"
+        style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: "8px 12px 8px 32px", color: T.text, fontSize: 13, width: 200 }}
+      />
+      {open && query.trim() && (
+        <div style={{ position: "absolute", top: 38, right: 0, width: 260, background: T.raised, border: `1px solid ${T.border}`, borderRadius: 12, boxShadow: "0 12px 30px rgba(0,0,0,0.25)", zIndex: 20, overflow: "hidden" }}>
+          {results.length === 0 ? (
+            <p style={{ fontSize: 12.5, color: T.text3, margin: 0, padding: 14 }}>No matches for "{query}".</p>
+          ) : results.map((r, i) => (
+            <button key={i} onMouseDown={() => go(r.page)} className="sh-btn"
+              style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left", padding: "10px 12px", border: "none", background: "transparent", borderBottom: i < results.length - 1 ? `1px solid ${T.border}` : "none" }}>
+              <Icon name={r.icon} size={14} color={T.text2} />
+              <span style={{ flex: 1, minWidth: 0 }}>
+                <p style={{ fontSize: 12.5, color: T.text, margin: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.label}</p>
+                <p style={{ fontSize: 11, color: T.text3, margin: 0 }}>{r.sub}</p>
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Topbar({ title, sub, studentName, data, setPage, themeMode, onToggleTheme }) {
+  const initials = studentName.split(" ").filter(Boolean).map(s => s[0]).join("").slice(0, 2).toUpperCase() || "ST";
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "20px 32px 0" }}>
+      <div>
+        <h1 className="sh-display" style={{ fontSize: 24, fontWeight: 600, color: T.text, margin: 0 }}>{title}</h1>
+        {sub && <p style={{ color: T.text3, fontSize: 13, margin: "4px 0 0" }}>{sub}</p>}
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+        <SearchBar data={data} setPage={setPage} />
+        <button onClick={onToggleTheme} className="sh-btn" title={themeMode === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+          style={{ width: 34, height: 34, borderRadius: "50%", border: `1px solid ${T.border}`, background: T.surface, display: "grid", placeItems: "center" }}>
+          <Icon name={themeMode === "dark" ? "sun" : "moon"} size={15} color={T.text2} />
+        </button>
+        <button onClick={() => setPage("profile")} className="sh-btn" style={{ width: 34, height: 34, borderRadius: "50%", background: T.violetSoft, color: T.violet, display: "grid", placeItems: "center", fontSize: 12.5, fontWeight: 600, border: "none" }}>{initials}</button>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
+/* Dashboard                                                              */
+/* ---------------------------------------------------------------------- */
+
+function Dashboard({ data, setPage }) {
+  const { tasks, habits, expenses, goals, mood } = data;
+  const pendingTasks = tasks.filter(t => !t.done);
+  const totalSpent = expenses.reduce((a, e) => a + e.amount, 0);
+  const activeGoal = goals[0];
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 20 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+        <Card style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <SectionTitle color={T.teal}>Today's focus</SectionTitle>
+            <div style={{ display: "flex", gap: 28 }}>
+              <div><p className="sh-mono" style={{ fontSize: 26, color: T.text, margin: 0 }}>{pendingTasks.length}</p><p style={{ fontSize: 12, color: T.text3, margin: 0 }}>tasks pending</p></div>
+              <div><p className="sh-mono" style={{ fontSize: 26, color: T.text, margin: 0 }}>{habits.filter(h => h.doneToday).length}/{habits.length}</p><p style={{ fontSize: 12, color: T.text3, margin: 0 }}>habits checked in</p></div>
+              <div><p className="sh-mono" style={{ fontSize: 26, color: T.text, margin: 0 }}>₹{totalSpent}</p><p style={{ fontSize: 12, color: T.text3, margin: 0 }}>spent this week</p></div>
+            </div>
+          </div>
+          <StreakRing value={12} goal={30} />
+        </Card>
+        <Card>
+          <SectionTitle color={T.coral} sub="From your task list — click to manage all tasks">Upcoming deadlines</SectionTitle>
+          {pendingTasks.length === 0 ? <EmptyState icon="check-square" text="Nothing due — you're all caught up." /> : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {pendingTasks.slice(0, 4).map(t => (
+                <div key={t.id} className="sh-row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "9px 10px", borderRadius: 10 }}>
+                  <span style={{ fontSize: 13.5, color: T.text }}>{t.name}</span>
+                  <Pill color={T.coral} bg={T.coralSoft}>{t.deadline}</Pill>
+                </div>
+              ))}
+            </div>
+          )}
+          <div style={{ marginTop: 12 }}>
+            <button onClick={() => setPage("tasks")} className="sh-btn" style={{ background: "none", border: "none", color: T.teal, fontSize: 12.5, fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}>
+              Open task manager <Icon name="chevron-right" size={13} color={T.teal} />
+            </button>
+          </div>
+        </Card>
+        <Card>
+          <SectionTitle color={T.violet}>AI study coach says</SectionTitle>
+          <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+            <div style={{ width: 32, height: 32, borderRadius: 9, background: T.violetSoft, display: "grid", placeItems: "center", flexShrink: 0 }}>
+              <Icon name="bot" size={16} color={T.violet} />
+            </div>
+            <p style={{ fontSize: 13.5, color: T.text2, margin: 0, lineHeight: 1.6 }}>
+              You've logged {mood.length} mood entries this week and completed {tasks.filter(t => t.done).length} tasks. Consider a 25-minute focus block for "{pendingTasks[0] ? pendingTasks[0].name : "your next task"}" before your next class — your energy scores are usually highest in the morning.
+            </p>
+          </div>
+        </Card>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+        <Card>
+          <SectionTitle color={T.amber}>Active goal</SectionTitle>
+          {activeGoal ? (
+            <React.Fragment>
+              <p style={{ fontSize: 14, fontWeight: 600, color: T.text, margin: "0 0 6px" }}>{activeGoal.name}</p>
+              <p style={{ fontSize: 12.5, color: T.text3, margin: "0 0 10px" }}>{activeGoal.milestones.filter(m => m.done).length}/{activeGoal.milestones.length} milestones done</p>
+              <div style={{ height: 8, background: T.surfaceAlt, borderRadius: 6, overflow: "hidden" }}>
+                <div style={{ height: "100%", width: `${(activeGoal.milestones.filter(m => m.done).length / activeGoal.milestones.length) * 100}%`, background: T.amber }} />
+              </div>
+            </React.Fragment>
+          ) : <EmptyState icon="target" text="No goals yet." />}
+        </Card>
+        <Card>
+          <SectionTitle color={T.teal}>This week's habits</SectionTitle>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {habits.map(h => (
+              <div key={h.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: 13, color: T.text2 }}>{h.name}</span>
+                <span className="sh-mono" style={{ fontSize: 12, color: T.teal }}>{h.streak}d</span>
+              </div>
+            ))}
+          </div>
+        </Card>
+        <Card>
+          <SectionTitle color={T.coral}>Notifications</SectionTitle>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+              <Icon name="bell" size={14} color={T.coral} />
+              <p style={{ fontSize: 12.5, color: T.text2, margin: 0 }}>Assignment "DBMS Report" due in 2 days.</p>
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+              <Icon name="bell" size={14} color={T.teal} />
+              <p style={{ fontSize: 12.5, color: T.text2, margin: 0 }}>You hit a 12-day habit streak. Keep going.</p>
+            </div>
+          </div>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
+/* Tasks                                                                  */
+/* ---------------------------------------------------------------------- */
+
+function formatTaskDeadline(iso) {
+  if (!iso) return "No date";
+  const d = new Date(iso + "T00:00:00");
+  if (Number.isNaN(d.getTime())) return "No date";
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
+  if (d.getTime() === today.getTime()) return "Today";
+  if (d.getTime() === tomorrow.getTime()) return "Tomorrow";
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function Tasks({ tasks, setTasks }) {
+  const [name, setName] = useState("");
+  const [deadline, setDeadline] = useState("");
+  const [error, setError] = useState("");
+  const add = () => {
+    const cleanName = name.trim();
+    if (!cleanName) { setError("Enter a task name."); return; }
+    if (/^\d+$/.test(cleanName)) { setError("Task name can't be only numbers."); return; }
+    if (!isDateInRange(deadline)) { setError("Deadline can't be in the past or too far in the future."); return; }
+    setError("");
+    setTasks([{ id: Date.now(), name: cleanName, deadline: formatTaskDeadline(deadline), done: false }, ...tasks]);
+    setName(""); setDeadline("");
+  };
+  const toggle = id => setTasks(tasks.map(t => t.id === id ? { ...t, done: !t.done } : t));
+  const remove = id => setTasks(tasks.filter(t => t.id !== id));
+  return (
+    <Card>
+      <SectionTitle color={T.teal} sub="Add tasks, track deadlines, mark work as done.">Tasks & to-do management</SectionTitle>
+      <div style={{ display: "flex", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
+        <TextField value={name} onChange={e => setName(e.target.value)} placeholder="Task name" style={{ flex: 2, minWidth: 180 }} />
+        <TextField type="date" value={deadline} onChange={e => setDeadline(e.target.value)} min={todayISO()} max={maxFutureISO()} style={{ minWidth: 150 }} />
+        <PrimaryButton onClick={add} icon="plus">Add task</PrimaryButton>
+      </div>
+      <p style={{ color: T.coral, fontSize: 12.5, margin: error ? "0 0 14px" : "0 0 18px", minHeight: error ? "auto" : 0 }}>{error}</p>
+      {tasks.length === 0 ? <EmptyState icon="check-square" text="No tasks yet — add your first one above." /> : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {tasks.map(t => (
+            <div key={t.id} className="sh-row" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 10px", borderRadius: 10, border: `1px solid ${T.border}` }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <button onClick={() => toggle(t.id)} className="sh-btn" style={{ width: 20, height: 20, borderRadius: 6, border: `1.5px solid ${t.done ? T.teal : T.borderStrong}`, background: t.done ? T.teal : "transparent", display: "grid", placeItems: "center" }}>
+                  {t.done && <Icon name="check" size={12} color="#08201B" />}
+                </button>
+                <span style={{ fontSize: 13.5, color: t.done ? T.text3 : T.text, textDecoration: t.done ? "line-through" : "none" }}>{t.name}</span>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <Pill color={T.text2} bg={T.surfaceAlt}>{t.deadline}</Pill>
+                <IconBtn icon="trash" danger onClick={() => remove(t.id)} />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
+/* Habit Tracker                                                          */
+/* ---------------------------------------------------------------------- */
+
+function Habits({ habits, setHabits }) {
+  const [name, setName] = useState("");
+  const [error, setError] = useState("");
+  const add = () => {
+    const cleanName = name.trim();
+    if (!cleanName) { setError("Enter a habit name."); return; }
+    if (isNumericOnly(cleanName)) { setError("Habit name can't be only numbers."); return; }
+    setError("");
+    setHabits([...habits, { id: Date.now(), name: cleanName, streak: 0, doneToday: false }]);
+    setName("");
+  };
+  const check = id => setHabits(habits.map(h => h.id === id ? { ...h, doneToday: !h.doneToday, streak: !h.doneToday ? h.streak + 1 : Math.max(0, h.streak - 1) } : h));
+  const remove = id => setHabits(habits.filter(h => h.id !== id));
+  return (
+    <Card>
+      <SectionTitle color={T.teal} sub="Build consistency — check in once a day.">Habit tracker</SectionTitle>
+      <div style={{ display: "flex", gap: 10, marginBottom: 8 }}>
+        <TextField value={name} onChange={e => setName(e.target.value)} placeholder="New habit, e.g. Read 20 minutes" style={{ flex: 1 }} />
+        <PrimaryButton onClick={add} icon="plus">Add habit</PrimaryButton>
+      </div>
+      <p style={{ color: T.coral, fontSize: 12.5, margin: error ? "0 0 14px" : "0 0 18px" }}>{error}</p>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 12 }}>
+        {habits.map(h => (
+          <div key={h.id} style={{ border: `1px solid ${T.border}`, borderRadius: 12, padding: 14, background: T.surfaceAlt }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+              <p style={{ fontSize: 13.5, color: T.text, margin: 0, fontWeight: 600 }}>{h.name}</p>
+              <IconBtn icon="trash" danger onClick={() => remove(h.id)} />
+            </div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 14 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <Icon name="flame" size={14} color={T.amber} />
+                <span className="sh-mono" style={{ fontSize: 13, color: T.text }}>{h.streak} days</span>
+              </div>
+              <button onClick={() => check(h.id)} className="sh-btn" style={{ borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 600, background: h.doneToday ? T.teal : T.surface, color: h.doneToday ? "#08201B" : T.text2, border: `1px solid ${h.doneToday ? T.teal : T.border}` }}>
+                {h.doneToday ? "Done today" : "Check in"}
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
+/* Study Planner                                                          */
+/* ---------------------------------------------------------------------- */
+
+const NUMERIC_ONLY_RE = /^\d+$/;
+function isNumericOnly(s) { return NUMERIC_ONLY_RE.test(s.trim()); }
+function formatDateLong(iso) {
+  if (!iso) return "";
+  const d = new Date(iso + "T00:00:00");
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+function Planner({ plans, setPlans }) {
+  const [subject, setSubject] = useState("");
+  const [target, setTarget] = useState("");
+  const [error, setError] = useState("");
+  const add = () => {
+    const cleanSubject = subject.trim();
+    if (!cleanSubject) { setError("Enter a subject name."); return; }
+    if (isNumericOnly(cleanSubject)) { setError("Subject name can't be only numbers."); return; }
+    if (!isDateInRange(target)) { setError("Target date can't be in the past or too far in the future."); return; }
+    setError("");
+    setPlans([{ id: Date.now(), subject: cleanSubject, target: target ? formatDateLong(target) : "Unscheduled", progress: 0 }, ...plans]);
+    setSubject(""); setTarget("");
+  };
+  const bump = id => setPlans(plans.map(p => p.id === id ? { ...p, progress: Math.min(100, p.progress + 20) } : p));
+  return (
+    <Card>
+      <SectionTitle color={T.teal} sub="Plan subjects and track study progress toward a target date.">Study planner</SectionTitle>
+      <div style={{ display: "flex", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
+        <TextField value={subject} onChange={e => setSubject(e.target.value)} placeholder="Subject, e.g. Data Structures" style={{ flex: 2, minWidth: 180 }} />
+        <TextField type="date" value={target} onChange={e => setTarget(e.target.value)} min={todayISO()} max={maxFutureISO()} style={{ flex: 1, minWidth: 150 }} />
+        <PrimaryButton onClick={add} icon="plus">Add plan</PrimaryButton>
+      </div>
+      <p style={{ color: T.coral, fontSize: 12.5, margin: error ? "0 0 14px" : "0 0 18px" }}>{error}</p>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {plans.map(p => (
+          <div key={p.id} style={{ border: `1px solid ${T.border}`, borderRadius: 12, padding: 14 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+              <span style={{ fontSize: 13.5, fontWeight: 600, color: T.text }}>{p.subject}</span>
+              <Pill color={T.text2} bg={T.surfaceAlt}>Target: {p.target}</Pill>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ flex: 1, height: 8, background: T.surfaceAlt, borderRadius: 6, overflow: "hidden" }}>
+                <div style={{ height: "100%", width: `${p.progress}%`, background: T.teal }} />
+              </div>
+              <span className="sh-mono" style={{ fontSize: 12, color: T.text2, width: 36 }}>{p.progress}%</span>
+              <button onClick={() => bump(p.id)} className="sh-btn" style={{ border: `1px solid ${T.border}`, background: "transparent", color: T.text2, borderRadius: 8, padding: "5px 10px", fontSize: 11.5 }}>+ session</button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
+/* Timetable                                                              */
+/* ---------------------------------------------------------------------- */
+
+function formatTime12(t24) {
+  if (!t24) return "";
+  const [h, m] = t24.split(":").map(Number);
+  if (Number.isNaN(h) || Number.isNaN(m)) return "";
+  const period = h >= 12 ? "PM" : "AM";
+  const h12 = ((h + 11) % 12) + 1;
+  return `${h12}:${String(m).padStart(2, "0")} ${period}`;
+}
+
+function Timetable({ schedule, setSchedule }) {
+  const days = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+  const [day, setDay] = useState("Mon");
+  const [time, setTime] = useState("");
+  const [className, setClassName] = useState("");
+  const [error, setError] = useState("");
+  const add = () => {
+    if (!time) { setError("Pick a valid time using the time field."); return; }
+    const cleanName = className.trim();
+    if (!cleanName) { setError("Enter a class or activity name."); return; }
+    if (isNumericOnly(cleanName)) { setError("Class name can't be only numbers."); return; }
+    setError("");
+    setSchedule([...schedule, { id: Date.now(), day, time: formatTime12(time), className: cleanName }]);
+    setTime(""); setClassName("");
+  };
+  const remove = id => setSchedule(schedule.filter(s => s.id !== id));
+  return (
+    <Card>
+      <SectionTitle color={T.teal} sub="Your weekly class schedule at a glance.">Timetable & class schedule</SectionTitle>
+      <div style={{ display: "flex", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
+        <select value={day} onChange={e => setDay(e.target.value)} style={{ background: T.surfaceAlt, border: `1px solid ${T.border}`, borderRadius: 10, padding: "9px 12px", color: T.text, fontSize: 13.5 }}>
+          {days.map(d => <option key={d} value={d}>{d}</option>)}
+        </select>
+        <TextField type="time" value={time} onChange={e => setTime(e.target.value)} style={{ width: 140 }} />
+        <TextField value={className} onChange={e => setClassName(e.target.value)} placeholder="Class / activity name" style={{ flex: 1, minWidth: 160 }} />
+        <PrimaryButton onClick={add} icon="plus">Add class</PrimaryButton>
+      </div>
+      <p style={{ color: T.coral, fontSize: 12.5, margin: error ? "0 0 14px" : "0 0 18px" }}>{error}</p>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10 }}>
+        {days.map(d => (
+          <div key={d}>
+            <p style={{ fontSize: 11.5, color: T.text3, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>{d}</p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {schedule.filter(s => s.day === d).length === 0 && <p style={{ fontSize: 11.5, color: T.text3 }}>—</p>}
+              {schedule.filter(s => s.day === d).map(s => (
+                <div key={s.id} style={{ background: T.surfaceAlt, border: `1px solid ${T.border}`, borderRadius: 10, padding: 8 }}>
+                  <p className="sh-mono" style={{ fontSize: 10.5, color: T.teal, margin: 0 }}>{s.time}</p>
+                  <p style={{ fontSize: 12, color: T.text, margin: "2px 0 4px" }}>{s.className}</p>
+                  <button onClick={() => remove(s.id)} style={{ background: "none", border: "none", color: T.text3, fontSize: 10.5, padding: 0 }}>Remove</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
+/* Notes                                                                  */
+/* ---------------------------------------------------------------------- */
+
+function Notes({ notes, setNotes }) {
+  const [title, setTitle] = useState("");
+  const [content, setContent] = useState("");
+  const [error, setError] = useState("");
+  const add = () => {
+    const cleanTitle = title.trim();
+    if (!cleanTitle) { setError("Enter a note title."); return; }
+    if (isNumericOnly(cleanTitle)) { setError("Note title can't be only numbers."); return; }
+    setError("");
+    setNotes([{ id: Date.now(), title: cleanTitle, content }, ...notes]);
+    setTitle(""); setContent("");
+  };
+  const remove = id => setNotes(notes.filter(n => n.id !== id));
+  return (
+    <Card>
+      <SectionTitle color={T.violet} sub="Store notes and study resources in one searchable place.">Notes & resource management</SectionTitle>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 8 }}>
+        <TextField value={title} onChange={e => setTitle(e.target.value)} placeholder="Note title" />
+        <textarea value={content} onChange={e => setContent(e.target.value)} placeholder="Write your note..." rows={3}
+          style={{ background: T.surfaceAlt, border: `1px solid ${T.border}`, borderRadius: 10, padding: 12, color: T.text, fontSize: 13.5, fontFamily: "Inter, sans-serif", resize: "vertical" }} />
+        <div><PrimaryButton onClick={add} icon="plus">Save note</PrimaryButton></div>
+      </div>
+      <p style={{ color: T.coral, fontSize: 12.5, margin: error ? "0 0 14px" : "0 0 18px" }}>{error}</p>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 12 }}>
+        {notes.map(n => (
+          <div key={n.id} style={{ background: T.surfaceAlt, border: `1px solid ${T.border}`, borderRadius: 12, padding: 14 }}>
+            <div style={{ display: "flex", justifyContent: "space-between" }}>
+              <p style={{ fontSize: 13.5, fontWeight: 600, color: T.text, margin: "0 0 6px" }}>{n.title}</p>
+              <IconBtn icon="trash" danger onClick={() => remove(n.id)} />
+            </div>
+            <p style={{ fontSize: 12.5, color: T.text2, margin: 0, lineHeight: 1.5 }}>{n.content || "No content."}</p>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
+/* Mood Journal                                                           */
+/* ---------------------------------------------------------------------- */
+
+const MOODS = [
+  { key: "great", label: "Great", color: T.teal },
+  { key: "good", label: "Good", color: T.amber },
+  { key: "okay", label: "Okay", color: T.violet },
+  { key: "low", label: "Low", color: T.coral },
+];
+
+function Mood({ mood, setMood }) {
+  const [entry, setEntry] = useState("");
+  const [selected, setSelected] = useState("good");
+  const add = () => { setMood([{ id: Date.now(), mood: selected, note: entry, date: new Date().toLocaleDateString() }, ...mood]); setEntry(""); };
+  return (
+    <Card>
+      <SectionTitle color={T.coral} sub="A quiet space to log how you're feeling.">Mood & mental health journal</SectionTitle>
+      <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+        {MOODS.map(m => (
+          <button key={m.key} onClick={() => setSelected(m.key)} className="sh-btn"
+            style={{ border: `1.5px solid ${selected === m.key ? m.color : T.border}`, background: selected === m.key ? m.color + "22" : "transparent", color: selected === m.key ? m.color : T.text2, borderRadius: 10, padding: "8px 14px", fontSize: 13, fontWeight: 600 }}>
+            {m.label}
+          </button>
+        ))}
+      </div>
+      <textarea value={entry} onChange={e => setEntry(e.target.value)} placeholder="What's on your mind today?" rows={3}
+        style={{ width: "100%", background: T.surfaceAlt, border: `1px solid ${T.border}`, borderRadius: 10, padding: 12, color: T.text, fontSize: 13.5, fontFamily: "Inter, sans-serif", resize: "vertical", marginBottom: 12 }} />
+      <PrimaryButton onClick={add} icon="plus">Log entry</PrimaryButton>
+      <div style={{ marginTop: 22, display: "flex", flexDirection: "column", gap: 8 }}>
+        {mood.map(m => {
+          const meta = MOODS.find(x => x.key === m.mood);
+          return (
+            <div key={m.id} style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "8px 0", borderTop: `1px solid ${T.border}` }}>
+              <Pill color={meta.color} bg={meta.color + "22"}>{meta.label}</Pill>
+              <p style={{ fontSize: 12.5, color: T.text2, margin: 0, flex: 1 }}>{m.note || "No note."}</p>
+              <span style={{ fontSize: 11, color: T.text3 }}>{m.date}</span>
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
+/* AI Study Coach Chatbot                                                 */
+/* ---------------------------------------------------------------------- */
+
+function Coach() {
+  const [messages, setMessages] = useState([{ from: "bot", text: "Hi! I'm your AI study coach. Ask me to plan a session, break down a topic, or just check in." }]);
+  const [input, setInput] = useState("");
+  const reply = text => {
+    const lower = text.toLowerCase();
+    if (lower.includes("plan")) return "Let's block 25 minutes for focused work, then a 5 minute break. Which subject should we start with?";
+    if (lower.includes("stress") || lower.includes("tired")) return "That's worth noting in your mood journal. Try a short walk, then tackle just one small task to rebuild momentum.";
+    if (lower.includes("exam") || lower.includes("test")) return "Good — let's reverse-plan from the exam date. How many days do you have, and which topics feel weakest?";
+    return "Got it. I've noted that — want me to turn this into a task or a study plan entry?";
+  };
+  const send = () => {
+    if (!input.trim()) return;
+    setMessages([...messages, { from: "user", text: input }, { from: "bot", text: reply(input) }]);
+    setInput("");
+  };
+  return (
+    <Card style={{ display: "flex", flexDirection: "column", height: 560 }}>
+      <SectionTitle color={T.violet} sub="A mock assistant — responses are simulated for this frontend demo.">AI study coach chatbot</SectionTitle>
+      <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 10, paddingRight: 6 }}>
+        {messages.map((m, i) => (
+          <div key={i} style={{ display: "flex", justifyContent: m.from === "user" ? "flex-end" : "flex-start" }}>
+            <div style={{ maxWidth: "72%", padding: "10px 14px", borderRadius: 14, background: m.from === "user" ? T.teal : T.surfaceAlt, color: m.from === "user" ? "#08201B" : T.text, fontSize: 13.5, lineHeight: 1.5, border: m.from === "user" ? "none" : `1px solid ${T.border}` }}>
+              {m.text}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+        <TextField value={input} onChange={e => setInput(e.target.value)} placeholder="Ask your study coach..." style={{ flex: 1 }} />
+        <button onClick={send} className="sh-btn" style={{ background: T.violet, border: "none", borderRadius: 10, width: 42, display: "grid", placeItems: "center" }}>
+          <Icon name="send" size={15} color="#161226" />
+        </button>
+      </div>
+    </Card>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
+/* Finance Tracker                                                        */
+/* ---------------------------------------------------------------------- */
+
+function Finance({ expenses, setExpenses }) {
+  const [category, setCategory] = useState("");
+  const [amount, setAmount] = useState("");
+  const [error, setError] = useState("");
+  const add = () => {
+    const cleanCategory = category.trim();
+    if (!cleanCategory) { setError("Enter a category name."); return; }
+    if (isNumericOnly(cleanCategory)) { setError("Category name can't be only numbers."); return; }
+    const num = Number(amount);
+    if (!amount || Number.isNaN(num) || num <= 0) { setError("Enter an amount greater than 0."); return; }
+    setError("");
+    setExpenses([{ id: Date.now(), category: cleanCategory, amount: num, date: new Date().toLocaleDateString() }, ...expenses]);
+    setCategory(""); setAmount("");
+  };
+  const remove = id => setExpenses(expenses.filter(e => e.id !== id));
+  const total = expenses.reduce((a, e) => a + e.amount, 0);
+  const byCategory = useMemo(() => {
+    const map = {};
+    expenses.forEach(e => { map[e.category] = (map[e.category] || 0) + e.amount; });
+    return Object.entries(map).map(([name, value]) => ({ name, value }));
+  }, [expenses]);
+  const pieColors = [T.teal, T.coral, T.violet, T.amber, T.red];
+  return (
+    <Card>
+      <SectionTitle color={T.amber} sub="Track spending by category to manage your budget.">Finance & expense tracker</SectionTitle>
+      <div style={{ display: "flex", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
+        <TextField value={category} onChange={e => setCategory(e.target.value)} placeholder="Category, e.g. Food" style={{ flex: 1, minWidth: 140 }} />
+        <TextField type="number" value={amount} onChange={e => setAmount(e.target.value)} placeholder="Amount (₹)" style={{ width: 130 }} />
+        <PrimaryButton onClick={add} icon="plus">Add expense</PrimaryButton>
+      </div>
+      <p style={{ color: T.coral, fontSize: 12.5, margin: error ? "0 0 14px" : "0 0 18px" }}>{error}</p>
+      <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 20 }}>
+        <div>
+          <p style={{ fontSize: 12.5, color: T.text3, marginBottom: 10 }}>Total spent: <span className="sh-mono" style={{ color: T.text }}>₹{total}</span></p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 260, overflowY: "auto" }}>
+            {expenses.map(e => (
+              <div key={e.id} className="sh-row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 10px", borderRadius: 8, border: `1px solid ${T.border}` }}>
+                <span style={{ fontSize: 13, color: T.text }}>{e.category}</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <span className="sh-mono" style={{ fontSize: 12.5, color: T.amber }}>₹{e.amount}</span>
+                  <IconBtn icon="trash" danger onClick={() => remove(e.id)} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div>
+          {byCategory.length > 0 ? <SimplePieChart data={byCategory} colors={pieColors} /> : <EmptyState icon="wallet" text="Add an expense to see the breakdown." />}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
+/* Goals & Milestones                                                     */
+/* ---------------------------------------------------------------------- */
+
+function Goals({ goals, setGoals }) {
+  const [name, setName] = useState("");
+  const [error, setError] = useState("");
+  const addGoal = () => {
+    const cleanName = name.trim();
+    if (!cleanName) { setError("Enter a goal name."); return; }
+    if (isNumericOnly(cleanName)) { setError("Goal name can't be only numbers."); return; }
+    setError("");
+    setGoals([...goals, { id: Date.now(), name: cleanName, milestones: [] }]);
+    setName("");
+  };
+  const [milestoneInputs, setMilestoneInputs] = useState({});
+  const [milestoneErrors, setMilestoneErrors] = useState({});
+  const addMilestone = goalId => {
+    const text = (milestoneInputs[goalId] || "").trim();
+    if (!text) { setMilestoneErrors({ ...milestoneErrors, [goalId]: "Enter a milestone." }); return; }
+    if (isNumericOnly(text)) { setMilestoneErrors({ ...milestoneErrors, [goalId]: "Milestone can't be only numbers." }); return; }
+    setMilestoneErrors({ ...milestoneErrors, [goalId]: "" });
+    setGoals(goals.map(g => g.id === goalId ? { ...g, milestones: [...g.milestones, { id: Date.now(), text, done: false }] } : g));
+    setMilestoneInputs({ ...milestoneInputs, [goalId]: "" });
+  };
+  const toggleMilestone = (goalId, mId) => {
+    setGoals(goals.map(g => g.id === goalId ? { ...g, milestones: g.milestones.map(m => m.id === mId ? { ...m, done: !m.done } : m) } : g));
+  };
+  return (
+    <Card>
+      <SectionTitle color={T.amber} sub="Set goals and break them into milestones.">Goal & milestone management</SectionTitle>
+      <div style={{ display: "flex", gap: 10, marginBottom: 8 }}>
+        <TextField value={name} onChange={e => setName(e.target.value)} placeholder="New goal, e.g. Improve GPA to 8.5" style={{ flex: 1 }} />
+        <PrimaryButton onClick={addGoal} icon="plus">Add goal</PrimaryButton>
+      </div>
+      <p style={{ color: T.coral, fontSize: 12.5, margin: error ? "0 0 14px" : "0 0 18px" }}>{error}</p>
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        {goals.map(g => {
+          const pct = g.milestones.length ? Math.round((g.milestones.filter(m => m.done).length / g.milestones.length) * 100) : 0;
+          return (
+            <div key={g.id} style={{ border: `1px solid ${T.border}`, borderRadius: 12, padding: 14 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                <span style={{ fontSize: 14, fontWeight: 600, color: T.text }}>{g.name}</span>
+                <span className="sh-mono" style={{ fontSize: 12, color: T.amber }}>{pct}%</span>
+              </div>
+              <div style={{ height: 7, background: T.surfaceAlt, borderRadius: 6, overflow: "hidden", marginBottom: 12 }}>
+                <div style={{ height: "100%", width: `${pct}%`, background: T.amber }} />
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}>
+                {g.milestones.map(m => (
+                  <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <button onClick={() => toggleMilestone(g.id, m.id)} className="sh-btn" style={{ width: 18, height: 18, borderRadius: 5, border: `1.5px solid ${m.done ? T.amber : T.borderStrong}`, background: m.done ? T.amber : "transparent", display: "grid", placeItems: "center" }}>
+                      {m.done && <Icon name="check" size={11} color="#332711" />}
+                    </button>
+                    <span style={{ fontSize: 12.5, color: m.done ? T.text3 : T.text2, textDecoration: m.done ? "line-through" : "none" }}>{m.text}</span>
+                  </div>
+                ))}
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <TextField value={milestoneInputs[g.id] || ""} onChange={e => setMilestoneInputs({ ...milestoneInputs, [g.id]: e.target.value })} placeholder="Add milestone" style={{ flex: 1 }} />
+                <button onClick={() => addMilestone(g.id)} className="sh-btn" style={{ border: `1px solid ${T.border}`, background: "transparent", color: T.text2, borderRadius: 8, padding: "0 12px", fontSize: 12 }}>Add</button>
+              </div>
+              {milestoneErrors[g.id] && <p style={{ color: T.coral, fontSize: 11.5, margin: "6px 0 0" }}>{milestoneErrors[g.id]}</p>}
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
+/* Analytics                                                              */
+/* ---------------------------------------------------------------------- */
+
+function Analytics({ data }) {
+  const weekly = [
+    { day: "Mon", tasks: 3, focus: 90 }, { day: "Tue", tasks: 5, focus: 120 }, { day: "Wed", tasks: 2, focus: 60 },
+    { day: "Thu", tasks: 4, focus: 100 }, { day: "Fri", tasks: 6, focus: 140 }, { day: "Sat", tasks: 1, focus: 40 }, { day: "Sun", tasks: 3, focus: 80 },
+  ];
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16 }}>
+        {[
+          { label: "Tasks completed", value: data.tasks.filter(t => t.done).length, icon: "check-square", color: T.teal },
+          { label: "Habit streak avg", value: Math.round(data.habits.reduce((a, h) => a + h.streak, 0) / (data.habits.length || 1)), icon: "flame", color: T.amber },
+          { label: "Notes saved", value: data.notes.length, icon: "note", color: T.violet },
+          { label: "Mood entries", value: data.mood.length, icon: "smile", color: T.coral },
+        ].map(s => (
+          <Card key={s.label} style={{ padding: 16 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <Icon name={s.icon} size={14} color={s.color} />
+              <span style={{ fontSize: 11.5, color: T.text3 }}>{s.label}</span>
+            </div>
+            <p className="sh-mono" style={{ fontSize: 22, color: T.text, margin: 0 }}>{s.value}</p>
+          </Card>
+        ))}
+      </div>
+      <Card>
+        <SectionTitle color={T.teal}>Tasks completed this week</SectionTitle>
+        <SimpleBarChart data={weekly} dataKey="tasks" color={T.teal} />
+      </Card>
+      <Card>
+        <SectionTitle color={T.violet}>Focus minutes trend</SectionTitle>
+        <SimpleLineChart data={weekly} dataKey="focus" color={T.violet} />
+      </Card>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
+/* Weekly AI Report                                                       */
+/* ---------------------------------------------------------------------- */
+
+function WeeklyReport({ data }) {
+  return (
+    <Card>
+      <SectionTitle color={T.violet} sub="Auto-generated summary of your week (optional module).">AI weekly performance report</SectionTitle>
+      <div style={{ display: "flex", gap: 16, marginBottom: 20 }}>
+        <div style={{ flex: 1, background: T.violetSoft, borderRadius: 12, padding: 16 }}>
+          <Icon name="sparkles" size={16} color={T.violet} />
+          <p style={{ fontSize: 13, color: T.text, marginTop: 10, lineHeight: 1.6 }}>
+            You completed <strong style={{ color: T.violet }}>{data.tasks.filter(t => t.done).length}</strong> tasks and logged <strong style={{ color: T.violet }}>{data.mood.length}</strong> mood entries this week. Your habit consistency is trending upward — nice work staying on track.
+          </p>
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14 }}>
+        <div><p style={{ fontSize: 12, color: T.text3, marginBottom: 6 }}>Strength</p><p style={{ fontSize: 13, color: T.text2 }}>Consistent habit check-ins, especially early in the week.</p></div>
+        <div><p style={{ fontSize: 12, color: T.text3, marginBottom: 6 }}>Watch out for</p><p style={{ fontSize: 13, color: T.text2 }}>Task completion dipped mid-week — consider lighter Wednesday loads.</p></div>
+        <div><p style={{ fontSize: 12, color: T.text3, marginBottom: 6 }}>Suggestion</p><p style={{ fontSize: 13, color: T.text2 }}>Schedule your hardest subject during your morning focus window.</p></div>
+      </div>
+    </Card>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
+/* Notifications                                                          */
+/* ---------------------------------------------------------------------- */
+
+function Notifications() {
+  const items = [
+    { icon: "check-square", color: T.teal, text: 'Task "Finish DBMS report" is due tomorrow.', time: "2h ago" },
+    { icon: "flame", color: T.amber, text: "You reached a 12-day habit streak on Reading.", time: "5h ago" },
+    { icon: "wallet", color: T.coral, text: "You've spent ₹1,200 this week — 20% over last week.", time: "1d ago" },
+    { icon: "target", color: T.violet, text: 'Milestone "Finish chapter 3" is 80% complete.', time: "2d ago" },
+  ];
+  return (
+    <Card>
+      <SectionTitle color={T.coral} sub="Reminders and system alerts.">Notification & reminder system</SectionTitle>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        {items.map((n, i) => (
+          <div key={i} className="sh-row" style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 8px", borderRadius: 10, borderBottom: i < items.length - 1 ? `1px solid ${T.border}` : "none" }}>
+            <div style={{ width: 32, height: 32, borderRadius: 9, background: n.color + "22", display: "grid", placeItems: "center", flexShrink: 0 }}>
+              <Icon name={n.icon} size={15} color={n.color} />
+            </div>
+            <p style={{ fontSize: 13, color: T.text2, margin: 0, flex: 1 }}>{n.text}</p>
+            <span style={{ fontSize: 11, color: T.text3, flexShrink: 0 }}>{n.time}</span>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
+/* Profile                                                                */
+/* ---------------------------------------------------------------------- */
+
+function Profile({ studentName, setStudentName, email, joinDate, data }) {
+  const [draftName, setDraftName] = useState(studentName);
+  const [saved, setSaved] = useState(false);
+  const initials = studentName.split(" ").filter(Boolean).map(s => s[0]).join("").slice(0, 2).toUpperCase() || "ST";
+  const tasksDone = data.tasks.filter(t => t.done).length;
+  const bestStreak = Math.max(0, ...data.habits.map(h => h.streak));
+  const notesCount = data.notes.length;
+  const save = () => {
+    const clean = draftName.trim();
+    if (!clean) return;
+    setStudentName(clean);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 1800);
+  };
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <Card style={{ display: "flex", alignItems: "center", gap: 20, flexWrap: "wrap" }}>
+        <div style={{ width: 64, height: 64, borderRadius: "50%", background: T.violetSoft, color: T.violet, display: "grid", placeItems: "center", fontSize: 22, fontWeight: 600, flexShrink: 0 }}>{initials}</div>
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <h2 className="sh-display" style={{ fontSize: 20, fontWeight: 600, color: T.text, margin: 0 }}>{studentName}</h2>
+          <p style={{ color: T.text3, fontSize: 13, margin: "4px 0 0" }}>{email || "No email on file"}</p>
+          <p style={{ color: T.text3, fontSize: 12, margin: "2px 0 0" }}>Member since {joinDate}</p>
+        </div>
+      </Card>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14 }}>
+        <Card>
+          <p style={{ fontSize: 11.5, color: T.text3, margin: "0 0 6px" }}>Tasks completed</p>
+          <p className="sh-display" style={{ fontSize: 26, color: T.teal, margin: 0 }}>{tasksDone}</p>
+        </Card>
+        <Card>
+          <p style={{ fontSize: 11.5, color: T.text3, margin: "0 0 6px" }}>Best habit streak</p>
+          <p className="sh-display" style={{ fontSize: 26, color: T.amber, margin: 0 }}>{bestStreak}d</p>
+        </Card>
+        <Card>
+          <p style={{ fontSize: 11.5, color: T.text3, margin: "0 0 6px" }}>Notes saved</p>
+          <p className="sh-display" style={{ fontSize: 26, color: T.violet, margin: 0 }}>{notesCount}</p>
+        </Card>
+      </div>
+      <Card>
+        <SectionTitle color={T.violet} sub="This is what shows up in your dashboard and initials badge.">Edit display name</SectionTitle>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          <TextField value={draftName} onChange={e => setDraftName(e.target.value)} placeholder="Your name" style={{ flex: 1, minWidth: 200 }} />
+          <PrimaryButton onClick={save} icon="check">Save</PrimaryButton>
+          {saved && <span style={{ fontSize: 12.5, color: T.teal }}>Saved.</span>}
+        </div>
+        <p style={{ fontSize: 12, color: T.text3, margin: "14px 0 0" }}>Email is set from the address you logged in with and can't be changed here.</p>
+      </Card>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
+/* Settings — Data Export & Privacy                                       */
+/* ---------------------------------------------------------------------- */
+
+function Toggle({ on, onClick }) {
+  return (
+    <button onClick={onClick} className="sh-btn" style={{ width: 40, height: 22, borderRadius: 999, border: "none", background: on ? T.teal : T.surfaceAlt, position: "relative", flexShrink: 0 }}>
+      <span style={{ position: "absolute", top: 3, left: on ? 20 : 3, width: 16, height: 16, borderRadius: "50%", background: on ? "#08201B" : T.text3, transition: "left .15s ease" }} />
+    </button>
+  );
+}
+
+function csvEscape(val) {
+  const s = String(val ?? "");
+  return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+
+function downloadBlob(filename, mimeType, content) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function buildCsv(data) {
+  const lines = [];
+  lines.push("Section,Field1,Field2,Field3");
+  data.tasks.forEach(t => lines.push(["Task", t.name, t.deadline, t.done ? "Done" : "Pending"].map(csvEscape).join(",")));
+  data.habits.forEach(h => lines.push(["Habit", h.name, `${h.streak}d streak`, h.doneToday ? "Checked in" : "Not yet"].map(csvEscape).join(",")));
+  data.plans.forEach(p => lines.push(["Study Plan", p.subject, p.target, `${p.progress}%`].map(csvEscape).join(",")));
+  data.schedule.forEach(s => lines.push(["Class", s.className, s.day, s.time].map(csvEscape).join(",")));
+  data.notes.forEach(n => lines.push(["Note", n.title, n.content, ""].map(csvEscape).join(",")));
+  data.expenses.forEach(e => lines.push(["Expense", e.category, `₹${e.amount}`, e.date].map(csvEscape).join(",")));
+  data.goals.forEach(g => lines.push(["Goal", g.name, `${g.milestones.filter(m => m.done).length}/${g.milestones.length} milestones`, ""].map(csvEscape).join(",")));
+  data.mood.forEach(m => lines.push(["Mood", m.day, m.value, ""].map(csvEscape).join(",")));
+  return lines.join("\n");
+}
+
+function buildPdf(data, studentName) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  const marginX = 14;
+  let y = 18;
+  const lineGap = 6;
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const ensureRoom = () => { if (y > pageHeight - 16) { doc.addPage(); y = 18; } };
+  const heading = text => { ensureRoom(); doc.setFont(undefined, "bold"); doc.setFontSize(13); doc.text(text, marginX, y); y += lineGap + 1; doc.setFont(undefined, "normal"); doc.setFontSize(10.5); };
+  const line = text => { ensureRoom(); doc.text(String(text), marginX, y); y += lineGap; };
+
+  doc.setFont(undefined, "bold"); doc.setFontSize(17);
+  doc.text("StudentHub — Data Export", marginX, y); y += 8;
+  doc.setFont(undefined, "normal"); doc.setFontSize(10.5);
+  doc.text(`${studentName} · ${new Date().toLocaleDateString()}`, marginX, y); y += 10;
+
+  heading("Tasks");
+  data.tasks.length ? data.tasks.forEach(t => line(`• ${t.name} — due ${t.deadline} — ${t.done ? "Done" : "Pending"}`)) : line("No tasks.");
+  y += 4;
+  heading("Habits");
+  data.habits.length ? data.habits.forEach(h => line(`• ${h.name} — ${h.streak}d streak — ${h.doneToday ? "Checked in today" : "Not yet today"}`)) : line("No habits.");
+  y += 4;
+  heading("Study Planner");
+  data.plans.length ? data.plans.forEach(p => line(`• ${p.subject} — target ${p.target} — ${p.progress}% complete`)) : line("No study plans.");
+  y += 4;
+  heading("Timetable");
+  data.schedule.length ? data.schedule.forEach(s => line(`• ${s.day} ${s.time} — ${s.className}`)) : line("No classes scheduled.");
+  y += 4;
+  heading("Notes");
+  data.notes.length ? data.notes.forEach(n => line(`• ${n.title}${n.content ? " — " + n.content.slice(0, 80) : ""}`)) : line("No notes.");
+  y += 4;
+  heading("Finance");
+  const total = data.expenses.reduce((a, e) => a + e.amount, 0);
+  line(`Total spent: ₹${total}`);
+  data.expenses.forEach(e => line(`• ${e.category} — ₹${e.amount} (${e.date})`));
+  y += 4;
+  heading("Goals & Milestones");
+  data.goals.length ? data.goals.forEach(g => line(`• ${g.name} — ${g.milestones.filter(m => m.done).length}/${g.milestones.length} milestones done`)) : line("No goals.");
+
+  return doc;
+}
+
+function Settings({ data, studentName }) {
+  const [shareProgress, setShareProgress] = useState(false);
+  const [publicProfile, setPublicProfile] = useState(false);
+  const [aiSuggestions, setAiSuggestions] = useState(true);
+  const [exportError, setExportError] = useState("");
+
+  const exportPdf = () => {
+    try {
+      if (!window.jspdf) { setExportError("PDF export library failed to load — check your connection and try again."); return; }
+      setExportError("");
+      const doc = buildPdf(data, studentName);
+      doc.save("studenthub-export.pdf");
+    } catch (e) { setExportError("Could not generate the PDF. Please try again."); }
+  };
+  const exportCsv = () => {
+    try {
+      setExportError("");
+      downloadBlob("studenthub-export.csv", "text/csv;charset=utf-8;", buildCsv(data));
+    } catch (e) { setExportError("Could not generate the CSV. Please try again."); }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <Card>
+        <SectionTitle color={T.teal} sub="Download a copy of your StudentHub data.">Data export</SectionTitle>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <PrimaryButton icon="download" onClick={exportPdf}>Export as PDF</PrimaryButton>
+          <PrimaryButton icon="download" color={T.surfaceAlt} dark={T.text} onClick={exportCsv}>Export as CSV</PrimaryButton>
+        </div>
+        {exportError && <p style={{ color: T.coral, fontSize: 12.5, margin: "12px 0 0" }}>{exportError}</p>}
+      </Card>
+      <Card>
+        <SectionTitle color={T.violet} sub="Control what StudentHub shares and uses.">Privacy settings</SectionTitle>
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {[
+            { label: "Share progress with mentors", sub: "Allows your admin to view analytics only.", on: shareProgress, set: setShareProgress },
+            { label: "Public profile", sub: "Show your name and streak on shared leaderboards.", on: publicProfile, set: setPublicProfile },
+            { label: "AI personalised suggestions", sub: "Let the AI coach use your data to tailor advice.", on: aiSuggestions, set: setAiSuggestions },
+          ].map(row => (
+            <div key={row.label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div><p style={{ fontSize: 13.5, color: T.text, margin: 0 }}>{row.label}</p><p style={{ fontSize: 12, color: T.text3, margin: "2px 0 0" }}>{row.sub}</p></div>
+              <Toggle on={row.on} onClick={() => row.set(!row.on)} />
+            </div>
+          ))}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
+/* Seed data — field names mirror the Chapter 4 database dictionary       */
+/* ---------------------------------------------------------------------- */
+
+const seedTasks = [
+  { id: 1, name: "Finish DBMS assignment", deadline: "Tomorrow", done: false },
+  { id: 2, name: "Read Chapter 4 notes", deadline: "Fri", done: false },
+  { id: 3, name: "Submit lab report", deadline: "Mon", done: true },
+];
+const seedHabits = [
+  { id: 1, name: "Read 20 minutes", streak: 12, doneToday: false },
+  { id: 2, name: "Sleep before midnight", streak: 5, doneToday: true },
+  { id: 3, name: "Drink 2L water", streak: 8, doneToday: false },
+];
+const seedPlans = [
+  { id: 1, subject: "Data Structures", target: "12 Sep", progress: 40 },
+  { id: 2, subject: "Operating Systems", target: "20 Sep", progress: 20 },
+];
+const seedSchedule = [
+  { id: 1, day: "Mon", time: "9:00 AM", className: "DBMS Lecture" },
+  { id: 2, day: "Wed", time: "11:00 AM", className: "OS Lab" },
+  { id: 3, day: "Fri", time: "2:00 PM", className: "Seminar" },
+];
+const seedNotes = [
+  { id: 1, title: "Normalization rules", content: "1NF, 2NF, 3NF, BCNF — remove repeating groups, partial and transitive dependencies." },
+];
+const seedMood = [
+  { id: 1, mood: "good", note: "Felt productive after finishing the report.", date: "Aug 21, 2026" },
+];
+const seedExpenses = [
+  { id: 1, category: "Food", amount: 450, date: "Aug 20, 2026" },
+  { id: 2, category: "Transport", amount: 180, date: "Aug 21, 2026" },
+  { id: 3, category: "Stationery", amount: 220, date: "Aug 22, 2026" },
+];
+const seedGoals = [
+  { id: 1, name: "Improve GPA to 8.5", milestones: [
+    { id: 1, text: "Finish chapter 3 revision", done: true },
+    { id: 2, text: "Complete 3 mock tests", done: false },
+    { id: 3, text: "Meet mentor for review", done: false },
+  ]},
+];
+
+/* ---------------------------------------------------------------------- */
+/* App shell                                                              */
+/* ---------------------------------------------------------------------- */
+
+function pageSub(page) {
+  const subs = {
+    dashboard: "Your personalized overview, at a glance.",
+    tasks: "Everything due, in one list.",
+    habits: "Small actions, tracked daily.",
+    planner: "Study by subject, not by chaos.",
+    timetable: "Your week, mapped out.",
+    notes: "Where your study material lives.",
+    mood: "Check in with yourself.",
+    coach: "Your always-on study partner.",
+    finance: "Know where it goes.",
+    goals: "Big goals, broken into steps.",
+    analytics: "How your week actually went.",
+    notifications: "What needs your attention.",
+    report: "The AI's take on your week.",
+    profile: "Who you are, in one place.",
+    settings: "Your data, your rules.",
+  };
+  return subs[page];
+}
+
+function StudentHubApp() {
+  const [ready, setReady] = useState(false);
+  const [loggedIn, setLoggedIn] = useState(false);
+  const [studentName, setStudentNameState] = useState("Student");
+  const [studentEmail, setStudentEmail] = useState("");
+  const [joinDate, setJoinDate] = useState("");
+  const [page, setPage] = useState("dashboard");
+  const [collapsed, setCollapsed] = useState(false);
+  const [themeMode, setThemeModeState] = useState("dark");
+
+  const [tasksState, setTasksState] = useState(seedTasks);
+  const [habitsState, setHabitsState] = useState(seedHabits);
+  const [plansState, setPlansState] = useState(seedPlans);
+  const [scheduleState, setScheduleState] = useState(seedSchedule);
+  const [notesState, setNotesState] = useState(seedNotes);
+  const [moodState, setMoodState] = useState(seedMood);
+  const [expensesState, setExpensesState] = useState(seedExpenses);
+  const [goalsState, setGoalsState] = useState(seedGoals);
+
+  const setTasks = useMemo(() => persistedSetter(setTasksState, "tasks"), []);
+  const setHabits = useMemo(() => persistedSetter(setHabitsState, "habits"), []);
+  const setPlans = useMemo(() => persistedSetter(setPlansState, "plans"), []);
+  const setSchedule = useMemo(() => persistedSetter(setScheduleState, "schedule"), []);
+  const setNotes = useMemo(() => persistedSetter(setNotesState, "notes"), []);
+  const setMood = useMemo(() => persistedSetter(setMoodState, "mood"), []);
+  const setExpenses = useMemo(() => persistedSetter(setExpensesState, "expenses"), []);
+  const setGoals = useMemo(() => persistedSetter(setGoalsState, "goals"), []);
+
+  // Load everything that was saved from a previous session before showing the app.
+  useEffect(() => {
+    (async () => {
+      const [tasks, habits, plans, schedule, notes, mood, expenses, goals, savedTheme] = await Promise.all([
+        loadKey("tasks", seedTasks), loadKey("habits", seedHabits), loadKey("plans", seedPlans),
+        loadKey("schedule", seedSchedule), loadKey("notes", seedNotes), loadKey("mood", seedMood),
+        loadKey("expenses", seedExpenses), loadKey("goals", seedGoals), loadKey("theme", "dark"),
+      ]);
+      setTasksState(tasks); setHabitsState(habits); setPlansState(plans); setScheduleState(schedule);
+      setNotesState(notes); setMoodState(mood); setExpensesState(expenses); setGoalsState(goals);
+      Object.assign(T, THEMES[savedTheme] || THEMES.dark);
+      setThemeModeState(savedTheme);
+      document.documentElement.setAttribute("data-theme", savedTheme);
+      document.body.style.background = (THEMES[savedTheme] || THEMES.dark).bg;
+      setReady(true);
+    })();
+  }, []);
+
+  const setStudentName = name => {
+    setStudentNameState(name);
+    saveKey("profile", { name, email: studentEmail, joinDate });
+  };
+
+  const toggleTheme = () => {
+    const next = themeMode === "dark" ? "light" : "dark";
+    Object.assign(T, THEMES[next]);
+    setThemeModeState(next);
+    document.documentElement.setAttribute("data-theme", next);
+    document.body.style.background = THEMES[next].bg;
+    saveKey("theme", next);
+  };
+
+  const data = { tasks: tasksState, habits: habitsState, plans: plansState, schedule: scheduleState, notes: notesState, mood: moodState, expenses: expensesState, goals: goalsState };
+
+  if (!ready) {
+    return (
+      <div style={{ minHeight: "100vh", background: T.bg, display: "flex", alignItems: "center", justifyContent: "center", color: T.text3, fontSize: 13 }}>
+        Loading StudentHub…
+      </div>
+    );
+  }
+
+  if (!loggedIn) {
+    return (
+      <Login onLogin={async email => {
+        const name = (email.split("@")[0] || "Student").replace(/[^a-zA-Z ]/g, " ").trim() || "Student";
+        const existing = await loadKey("profile", null);
+        const jd = (existing && existing.joinDate) || new Date().toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+        setStudentNameState((existing && existing.name) || name);
+        setStudentEmail(email);
+        setJoinDate(jd);
+        saveKey("profile", { name: (existing && existing.name) || name, email, joinDate: jd });
+        setLoggedIn(true);
+      }} />
+    );
+  }
+
+  const meta = PAGE_META[page];
+
+  return (
+    <div style={{ display: "flex", minHeight: "100vh", background: T.bg }} data-theme={themeMode}>
+      <Sidebar page={page} setPage={setPage} collapsed={collapsed} setCollapsed={setCollapsed} onLogout={() => setLoggedIn(false)} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <Topbar title={meta.label} sub={pageSub(page)} studentName={studentName} data={data} setPage={setPage} themeMode={themeMode} onToggleTheme={toggleTheme} />
+        <div style={{ padding: "20px 32px 48px", maxHeight: "calc(100vh - 20px)", overflowY: "auto" }}>
+          {page === "dashboard" && <Dashboard data={data} setPage={setPage} />}
+          {page === "tasks" && <Tasks tasks={tasksState} setTasks={setTasks} />}
+          {page === "habits" && <Habits habits={habitsState} setHabits={setHabits} />}
+          {page === "planner" && <Planner plans={plansState} setPlans={setPlans} />}
+          {page === "timetable" && <Timetable schedule={scheduleState} setSchedule={setSchedule} />}
+          {page === "notes" && <Notes notes={notesState} setNotes={setNotes} />}
+          {page === "mood" && <Mood mood={moodState} setMood={setMood} />}
+          {page === "coach" && <Coach />}
+          {page === "finance" && <Finance expenses={expensesState} setExpenses={setExpenses} />}
+          {page === "goals" && <Goals goals={goalsState} setGoals={setGoals} />}
+          {page === "analytics" && <Analytics data={data} />}
+          {page === "notifications" && <Notifications />}
+          {page === "report" && <WeeklyReport data={data} />}
+          {page === "profile" && <Profile studentName={studentName} setStudentName={setStudentName} email={studentEmail} joinDate={joinDate} data={data} />}
+          {page === "settings" && <Settings data={data} studentName={studentName} />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<StudentHubApp />);
+</script>
+</body>
+</html>
