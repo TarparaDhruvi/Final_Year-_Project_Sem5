@@ -1,0 +1,8 @@
+
+backend/private_uploads/
+backend/venv/
+backend/.env
+frontend/node_modules/
+frontend/dist/
+__pycache__/
+.pytest_cache/
